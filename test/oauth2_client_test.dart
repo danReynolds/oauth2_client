@@ -2,6 +2,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:http/http.dart' as http;
 import 'package:mockito/annotations.dart';
 import 'package:mockito/mockito.dart';
+import 'package:oauth2_client/access_token_request.dart';
 import 'package:oauth2_client/access_token_response.dart';
 import 'package:oauth2_client/oauth2_client.dart';
 import 'package:oauth2_client/src/base_web_auth.dart';
@@ -90,10 +91,15 @@ void main() {
               200));
 
       final tknResponse = await oauth2Client.requestAccessToken(
-          httpClient: httpClient,
+        AccessTokenRequest(
           code: authCode,
+          tokenUrl: tokenUrl,
           clientId: clientId,
-          codeVerifier: codeVerifier);
+          redirectUri: redirectUri,
+          httpClient: httpClient,
+          codeVerifier: codeVerifier,
+        ),
+      );
 
       expect(
           verify(httpClient.post(Uri.parse(tokenUrl),
@@ -125,11 +131,15 @@ void main() {
               200));
 
       final tknResponse = await oauth2Client.requestAccessToken(
-          httpClient: httpClient,
+        AccessTokenRequest(
           code: authCode,
+          tokenUrl: tokenUrl,
           clientId: clientId,
-          customHeaders: {'test': '42'},
-          codeVerifier: codeVerifier);
+          redirectUri: redirectUri,
+          httpClient: httpClient,
+          codeVerifier: codeVerifier,
+        ),
+      );
 
       expect(
           verify(httpClient.post(Uri.parse(tokenUrl),
@@ -192,11 +202,15 @@ void main() {
           .thenAnswer((_) async => http.Response('', 404));
 
       final tknResponse = await oauth2Client.requestAccessToken(
-          httpClient: httpClient,
+        AccessTokenRequest(
           code: authCode,
+          tokenUrl: tokenUrl,
           clientId: clientId,
-          // clientSecret: clientSecret,
-          codeVerifier: codeVerifier);
+          redirectUri: redirectUri,
+          httpClient: httpClient,
+          codeVerifier: codeVerifier,
+        ),
+      );
 
       expect(tknResponse.isValid(), false);
     });

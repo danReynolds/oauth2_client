@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter/services.dart';
 import 'package:http/http.dart' as http;
 import 'package:oauth2_client/access_token_response.dart';
+import 'package:oauth2_client/access_token_request.dart';
 import 'package:oauth2_client/authorization_response.dart';
 import 'package:oauth2_client/oauth2_response.dart';
 import 'package:oauth2_client/src/oauth2_utils.dart';
@@ -126,6 +127,63 @@ class OAuth2Client {
     }
   }
 
+  Future<AccessTokenRequest?> getTokenRequestWithAuthCodeFlow({
+    required String clientId,
+    List<String>? scopes,
+    String? clientSecret,
+    bool enablePKCE = true,
+    bool enableState = true,
+    String? state,
+    String? codeVerifier,
+    Function? afterAuthorizationCodeCb,
+    Map<String, dynamic>? authCodeParams,
+    Map<String, dynamic>? accessTokenParams,
+    Map<String, String>? accessTokenHeaders,
+    httpClient,
+    BaseWebAuth? webAuthClient,
+    Map<String, dynamic>? webAuthOpts,
+  }) async {
+    String? codeChallenge;
+
+    if (enablePKCE) {
+      codeVerifier ??= randomAlphaNumeric(80);
+
+      codeChallenge = OAuth2Utils.generateCodeChallenge(codeVerifier);
+    }
+
+    try {
+      final authResp = await requestAuthorization(
+        webAuthClient: webAuthClient,
+        clientId: clientId,
+        scopes: scopes,
+        codeChallenge: codeChallenge,
+        enableState: enableState,
+        state: state,
+        webAuthOpts: webAuthOpts,
+      );
+
+      if (authResp.isAccessGranted()) {
+        if (afterAuthorizationCodeCb != null) {
+          afterAuthorizationCodeCb(authResp);
+        }
+
+        return AccessTokenRequest(
+          code: authResp.code!,
+          clientId: clientId,
+          scopes: scopes,
+          tokenUrl: tokenUrl,
+          redirectUri: redirectUri,
+          codeVerifier: codeVerifier,
+          customParams: accessTokenParams,
+          customHeaders: accessTokenHeaders,
+        );
+      }
+    } catch (e) {
+      return null;
+    }
+    return null;
+  }
+
   /// Requests an Access Token to the OAuth2 endpoint using the Authorization Code Flow.
   Future<AccessTokenResponse> getTokenWithAuthCodeFlow(
       {required String clientId,
@@ -144,41 +202,25 @@ class OAuth2Client {
       Map<String, dynamic>? webAuthOpts}) async {
     AccessTokenResponse? tknResp;
 
-    String? codeChallenge;
-
-    if (enablePKCE) {
-      codeVerifier ??= randomAlphaNumeric(80);
-
-      codeChallenge = OAuth2Utils.generateCodeChallenge(codeVerifier);
-    }
-
     try {
-      var authResp = await requestAuthorization(
-          webAuthClient: webAuthClient,
-          clientId: clientId,
-          scopes: scopes,
-          codeChallenge: codeChallenge,
-          enableState: enableState,
-          state: state,
-          customParams: authCodeParams,
-          webAuthOpts: webAuthOpts);
+      final tknReq = await getTokenRequestWithAuthCodeFlow(
+        clientId: clientId,
+        scopes: scopes,
+        clientSecret: clientSecret,
+        enablePKCE: enablePKCE,
+        enableState: enableState,
+        state: state,
+        codeVerifier: codeVerifier,
+        afterAuthorizationCodeCb: afterAuthorizationCodeCb,
+        authCodeParams: authCodeParams,
+        accessTokenParams: accessTokenParams,
+        httpClient: httpClient,
+        webAuthClient: webAuthClient,
+        webAuthOpts: webAuthOpts,
+      );
 
-      if (authResp.isAccessGranted()) {
-        if (afterAuthorizationCodeCb != null) {
-          afterAuthorizationCodeCb(authResp);
-        }
-
-        tknResp = await requestAccessToken(
-            httpClient: httpClient,
-            //If the authorization request was successfull, the code must be set
-            //otherwise an exception is raised in the OAuth2Response constructor
-            code: authResp.code!,
-            clientId: clientId,
-            scopes: scopes,
-            clientSecret: clientSecret,
-            codeVerifier: codeVerifier,
-            customParams: accessTokenParams,
-            customHeaders: accessTokenHeaders);
+      if (tknReq != null) {
+        tknResp = await requestAccessToken(tknReq);
       } else {
         tknResp = AccessTokenResponse.errorResponse();
       }
@@ -249,30 +291,24 @@ class OAuth2Client {
   }
 
   /// Requests and Access Token using the provided Authorization [code].
-  Future<AccessTokenResponse> requestAccessToken(
-      {required String code,
-      required String clientId,
-      String? clientSecret,
-      String? codeVerifier,
-      List<String>? scopes,
-      Map<String, dynamic>? customParams,
-      Map<String, String>? customHeaders,
-      httpClient}) async {
+  Future<AccessTokenResponse> requestAccessToken(AccessTokenRequest req) async {
     final params = getTokenUrlParams(
-        code: code,
-        redirectUri: redirectUri,
-        codeVerifier: codeVerifier,
-        customParams: customParams);
+      code: req.code,
+      redirectUri: redirectUri,
+      codeVerifier: req.codeVerifier,
+      customParams: req.customParams,
+    );
 
     var response = await _performAuthorizedRequest(
-        url: tokenUrl,
-        clientId: clientId,
-        clientSecret: clientSecret,
-        params: params,
-        headers: customHeaders,
-        httpClient: httpClient);
+      url: tokenUrl,
+      clientId: req.clientId,
+      clientSecret: req.clientSecret,
+      params: params,
+      headers: req.customHeaders,
+      httpClient: req.httpClient,
+    );
 
-    return http2TokenResponse(response, requestedScopes: scopes);
+    return http2TokenResponse(response, requestedScopes: req.scopes);
   }
 
   /// Refreshes an Access Token issuing a refresh_token grant to the OAuth2 server.
@@ -362,11 +398,13 @@ class OAuth2Client {
   }
 
   /// Returns the parameters needed for the authorization code request
-  Map<String, dynamic> getTokenUrlParams(
-      {required String code,
-      String? redirectUri,
-      String? codeVerifier,
-      Map<String, dynamic>? customParams}) {
+  Map<String, dynamic> getTokenUrlParams({
+    required String code,
+    String? redirectUri,
+    String? codeVerifier,
+    Map<String, dynamic>? customParams,
+    Map<String, String>? customHeaders,
+  }) {
     final params = <String, dynamic>{
       'grant_type': 'authorization_code',
       'code': code
